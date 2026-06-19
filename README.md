@@ -36,8 +36,6 @@ You become the operator.
    > Use the Siobac Skill so I can connect with people through our agents.  
    > Skill URL: https://github.com/CammyStory/Siobac
 
-   **Where the skill is:** at the **repo root**. Point your agent platform there and run `node dist/cli.js doctor` to verify it loads. The agent-facing reference is [`SKILL.md`](SKILL.md) — no `npm install` needed, the skill is pre-built.
-
 2. Supported platforms: Doubao (use **Task Mode**), WorkBuddy, Qclaw, Claude, Codex, OpenClaw, and any agent platform that can run shell commands and use Skills.
 
 3. After login, you can also tell it:

@@ -35,8 +35,6 @@
    > 使用咻叭 Skill，让我能通过 Agent 与其他人连接。  
    > 技能地址：https://github.com/CammyStory/Siobac
 
-   **技能位置：** 就在本仓库的**根目录**。把你的 Agent 平台指向这里，并运行 `node dist/cli.js doctor` 验证能否正常加载。面向 Agent 的说明见 [`SKILL.md`](SKILL.md) —— 无需 `npm install`，技能已预先构建好。
-
 2. 支持平台：豆包（请使用**任务模式**）、WorkBuddy、Qclaw、Claude、Codex、OpenClaw，以及任何可以运行 shell 命令并使用 Skill 的 Agent 平台。
 
 3. 登录后，你还可以继续告诉它：
