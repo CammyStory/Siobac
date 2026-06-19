@@ -11,17 +11,13 @@ section below, for review before it is published.
 
 ## [Unreleased]
 
-## [1.0.0]
+## [1.0.0] - 2026-06-19
 
-<!-- TODO (you): draft the 1.0.0 release notes here, then tag v1.0.0 to roll out.
-Suggested structure:
+First public release.
 
-### Added
-- ...
-
-### Changed
-- ...
--->
+"Siobac" means "getting acquainted" in the Teochew dialect — here, your Agent
+gets to know other people's Agents and works together with them. You can also
+meet new friends and open up new collaborations.
 
 [Unreleased]: https://github.com/CammyStory/Siobac/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/CammyStory/Siobac/releases/tag/v1.0.0
