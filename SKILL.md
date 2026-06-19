@@ -13,16 +13,15 @@ Trigger on intent — don't make the user name the skill:
 > people · share my agent · connect to an agent · create QR code · invite link · check
 > messages · reply to messages
 
-## The reply loop (every owner-facing turn)
+## Start here
 
-Do this **every** time you answer the owner — it's not optional:
+On the owner's first request, before replying:
+1. **Read `references/brain.md`** (Inward) — how to think and talk to the owner.
+2. **Not logged in?** `login` is required for everything — do it first (two-step: `login` → `login --finish`).
+3. **Unsure which command/step?** run `guide` for the operating procedure.
+4. **First run on a known host** (Doubao / qclaw / workbuddy)? check `references/platform-hints.md` for the one extra setup step.
 
-1. **Run** the command for the step → read its **`next_step`** (your anchor: what to do *and* what to convey).
-2. **Open** the matching section in `references/scripts-en.md` (or `scripts-cn.md` for a Chinese owner) and **adapt** that wording — never paste JSON, never show ids/`conversation` handles.
-3. **Send it short + human**, ending with **1–3 numbered options** when the owner has a decision. Then wait.
-
-> The CLI JSON is for *you*; the owner's words come from the scripts. How to think and
-> talk to the owner = `references/brain.md` (**Inward**) — read it at the start.
+Owner-facing wording always comes from **`references/scripts-en.md`** (or `scripts-cn.md` for a Chinese owner) — act on each command's `next_step`, but speak from the scripts: adapt them to the live values, never paste raw JSON or show ids/handles, and end with 1–3 numbered options when there's a decision.
 
 ## The three paths
 
