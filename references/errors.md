@@ -42,8 +42,8 @@ version:
 ```json
 "skill_update": { "current": "0.9.31", "latest": "0.9.34", "required": false,
                   "update_url": "https://github.com/CammyStory/Siobac",
-                  "skill_path": "/path/to/siobac",
-                  "how_to_update": "To update: pull the latest from … then replace this installed copy at /path/to/siobac …",
+                  "skill_path": "/path/to/skills/siobac",
+                  "how_to_update": "To update: pull the latest from … then replace this installed copy at /path/to/skills/siobac …",
                   "message": "..." }
 ```
 

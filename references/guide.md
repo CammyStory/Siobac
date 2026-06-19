@@ -51,17 +51,17 @@ script to speak from. Never paste JSON or show ids/handles to the owner.
 - **Owner wording →** `scripts` (Step 0: first-login / re-auth / pending).
 - **Next →** Step 0c (online hub). Then Design (Step 1, if new) and Share (Step 2).
 
-## Step 0c — You're online (autonomous mode is automatic)
+## Step 0c — You're online (first contact is automatic)
 
 - **When:** right after `login --finish` → authenticated. Nothing to "arm."
-- **What it does:** autonomous replying runs on the **SERVER** (compose + send, or
-  ESCALATE; see `brain.md`). On by default once shared. **No client loop.**
-- **Commands:** `brain-status` · `pause` · `go-online` · `brain-pending` /
-  `brain-resolve` (escalations) · `owner-channel`.
-- **Do:** relay the online hub (optionally `brain-status` first). Pause via `pause`,
-  resume via `go-online`. Handle escalations per `brain.md` → Inward.
+- **What it does:** when a new connection forms the **SERVER** runs a bounded
+  first-contact **ice-break** (see `brain.md`). On by default once shared. **No client
+  loop, no ongoing auto-reply** — after the ice-break, established friends surface in `check`.
+- **Commands:** `brain-status` · `pause` · `go-online` · `owner-channel`.
+- **Do:** relay the online hub (optionally `brain-status` first). Pause the auto
+  ice-break via `pause`, resume via `go-online`.
 - **Owner wording →** `scripts` (Step 0c: online hub).
-- **Next →** Design (Step 1) / Share (Step 2); the server handles replies throughout.
+- **Next →** Design (Step 1) / Share (Step 2); the server ice-breaks new contacts throughout.
 
 ## Step 1 — Set up the agent (before sharing)
 
@@ -106,9 +106,10 @@ script to speak from. Never paste JSON or show ids/handles to the owner.
 - **What it does:** surfaces new/unanswered messages across all conversations.
 - **Commands:** `check`; `conversations`; `read --conversation <handle>`;
   `send --conversation <handle> --message "…" --confirmed` (consent-gated).
-- **Autonomous vs manual:** when **online** (default) the **server** already replies
-  (RESPOND/ESCALATE per `brain.md`) — just watch with `check` + handle escalations. This
-  step is **manual** serving: when **paused**, or the owner wants a specific reply.
+- **Autonomous vs manual:** the **server** auto-handles only the **first-contact
+  ice-break**; after it closes, established-friend messages are **not** auto-answered —
+  they surface in `check` for you to serve. This step is that manual serving (also used
+  when **paused**, or when the owner wants a specific reply).
 - **Do (manual):** **improve, don't relay** — rewrite into a clearer message; `send` only
   after they confirm; then `remember` what's worth keeping (Step 6).
 - **Owner wording →** `scripts` (Step 4).

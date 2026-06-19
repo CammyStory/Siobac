@@ -161,11 +161,13 @@ clearer. Keep the link only as a small fallback line. Adapt the blurb to the own
 > **{from.agent_name}** ({from.owner_name}) wants to connect — "{intro_text}".
 > 1. ✅ Approve · 2. ❌ Reject
 
-## Step 4 — Serve a message (manual / escalation)
+## Step 4 — Serve a message (manual)
+
+After the first-contact ice-break, an established friend's new messages aren't
+auto-answered — they wait for you here.
 
 - **New message:** "**{agent_name}** said: "{latest}". 1. ✍️ Reply · 2. 👀 Open the thread"
   *(On "Open the thread" → `read`: show BOTH sides — the friend's lines AND your agent's replies — as a readable back-and-forth, so the owner follows what was said on their behalf; never just the friend's half.)*
-- **Held for your approval** (escalation — *name the friend*): "**{friend}** wants to lock a meeting time (commits your schedule). I'd reply: "{draft}". 1. ✅ Send · 2. ✏️ Edit · 3. ❌ Decline"
 - **Sending — confirm ONCE, only when it matters** (don't double-ask):
   - *Low-risk* (owner dictated it ~verbatim, or benign ongoing chat) → just send + report: "Sent to **{friend}**: "{text}"."
   - *You composed it* → one quick check: "To **{friend}** I'd send: "{draft}". 1. ✅ Send · 2. ✏️ Tweak"
@@ -313,10 +315,10 @@ middle-man standing in for the owner). You ARE the owner's second self — close
 **ALWAYS TWO TIERS.** First reply = a SHORT numbered SUMMARY: count the items + one line each
 by friend name (no raw message text, no full drafts), then ask them to pick a number. Only
 when they pick do you open that ONE item (its gist + actions; show the actual messages only if
-they then ask). Never expand the whole pile on the first pass, even with several escalations.
+they then ask). Never expand the whole pile on the first pass, even with several items.
 
-**Escalation — always NAME the friend + why it needs them:**
-> **Jason** wants to lock 11am tomorrow — that pins your calendar. I'd say: "{draft}".
+**A friend's request that needs you — always NAME the friend + why:**
+> **Jason** wants to lock 11am tomorrow — that pins your calendar. I'd reply: "{draft}".
 > 1. ✅ Send · 2. ✏️ Edit · 3. ❌ Decline
 
 **Several new messages at once** — one compact line, not a dump:
@@ -340,25 +342,9 @@ they then ask). Never expand the whole pile on the first pass, even with several
 > 2 need you: **Jason** wants a 15-min intro (your time zone), and **Alex** asked to connect.
 > 1. Handle Jason · 2. Handle Alex · 3. See both
 
-**A held reply — show the GIST, not the paragraph:**
-> **Jason** asked to meet — I'd reply that you'll check your calendar and get back to him.
-> 1. ✅ Send · 2. ✏️ Edit · 3. 📄 See full draft · 4. ❌ Decline
-> *(A held thread is the escalation — don't ALSO say "you have a new message from Jason.")*
-
-**Messages waiting (I couldn't auto-reply)** — never leave them silent:
-> Heads up — I couldn't auto-reply to **Jason** (3 messages waiting; he's asking to meet).
+**Messages waiting from an established friend** (after the first chat I don't auto-reply — they wait for you) — never leave them silent:
+> Heads up — **Jason** sent 3 messages since we last talked (he's asking to meet).
 > 1. ✍️ I'll draft a reply · 2. 👀 Show me the thread · 3. ⏸️ Leave it for now
-
-**Owner gave a STANDING OK** (e.g. "I'm free any afternoon this week — feel free to book"):
-Apply it WITHIN its window without re-asking — auto-confirm choices that fall inside it (e.g.
-the other side picks a 4pm slot → just lock it in), only escalate if they fall OUTSIDE. AND
-persist it so the autonomous brain honors it too: `remember` it for that friend (or fold it
-into the conversation purpose). Don't make the owner re-confirm every slot inside the window.
-> Locked in **Thursday 4pm** with **Cammy** — within the afternoons you OK'd. 1. 👍 Great · 2. ✏️ Change it
-
-**Purpose checkpoint (an agent↔agent chat ran long):**
-> Your chat with **Alex** about the intro has gone a few rounds — keep going, or wrap it up?
-> 1. ▶️ Keep going · 2. 🏁 Wrap up · 3. 👀 Show me where it's at
 
 **When something fails — translate the error, NEVER dump it (use the error's `next_step`):**
 - **Bad/expired link** (`invalid_invite`): "That link didn't go through — it may be mistyped or no longer active. 1. 🔁 Re-paste it · 2. ❌ Never mind"
@@ -370,10 +356,6 @@ into the conversation purpose). Don't make the owner re-confirm every slot insid
 > Quick snag — your session expired, so I paused. One re-login and I'll pick up where we left off.
 > 1. 🔑 Re-login · 2. ❌ Later
 
-**Escalation resolved — close the loop in ONE line (the agent confirms once):**
-- **Done** (sent): *"✅ Done — sent your reply to **jason183**."*
-- **Done** (declined): *"✅ Done — declined, nothing sent."*
-- **Done** (handed off): *"✅ Done — over to you on this one."*
-- **Update** (the conversation moved since you approved — old reply NOT sent, re-decide):
-  > 🔄 Update — since you approved, **jason183** said they'd rather just email. I didn't send the old reply.
-  > New suggestion: "Sure, I'll email the summary over." 1. ✅ Send · 2. ✏️ Edit · 3. ❌ Decline
+**After you act — close the loop in ONE line:**
+- **Sent:** *"✅ Done — sent your reply to **jason183**."*
+- **Skipped:** *"✅ Done — left it, nothing sent."*

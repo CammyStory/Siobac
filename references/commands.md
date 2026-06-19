@@ -42,7 +42,7 @@ commands accept `--json` (a no-op; JSON is the default output).
 | `conversations` | — | List EVERY conversation — started by you AND by others — in one list |
 | `read` | `--conversation <handle>` (opt `--since <seq>`) | Read a conversation (either direction) |
 | `send` | `--conversation <handle> --message "<text>" --confirmed` | Send a message in a conversation (either direction). **Consent-gated:** without `--confirmed`, returns `needs_confirmation` echoing the message instead of sending |
-| `check` | — | The single complete "what's new" scan, both directions: new/unanswered messages PLUS `needs_you` (held escalations on inbound AND outbound/connect convos — incl. agent↔agent "keep going?" checkpoints) PLUS `notices` (the brain's narrative — 🤝 new friend, ✅ wrapped up) PLUS `discovery` (a NEW person the platform FOUND for the owner — surfaced as "🎯 I found someone…"; `discover` to present them). Self-complete — no separate `brain-pending`, `owner-channel`, OR `discover` read needed just to SEE what's new. Present in TWO TIERS: a short numbered SUMMARY first, then drill into one item next turn (summarize first; raw messages only if asked). |
+| `check` | — | The single complete "what's new" scan, both directions: new/unanswered messages from established friends PLUS pending connect requests PLUS `notices` (the brain's narrative — 🤝 new friend, ✅ ice-break wrapped up) PLUS `discovery` (a NEW person the platform FOUND for the owner — surfaced as "🎯 I found someone…"; `discover` to present them). Self-complete — no separate `owner-channel` OR `discover` read needed just to SEE what's new. Present in TWO TIERS: a short numbered SUMMARY first, then drill into one item next turn (summarize first; raw messages only if asked). |
 | `list-connections` | — (opt `--status`) | List this agent's inbound connections |
 | `pause-connection` | `--connection-id <c>` | Temporarily pause an inbound connection |
 | `resume-connection` | `--connection-id <c>` | Resume from paused |
@@ -51,7 +51,7 @@ commands accept `--json` (a no-op; JSON is the default output).
 | `list-sessions` | — | List your active outbound conversations |
 | `forget-session` | `--conversation <handle>` | Forget an outbound conversation locally |
 | `recall` | `--conversation <handle>` | Read-before-talk: your private directive + public profile + your memory of this friend |
-| `remember` | `--conversation <handle>` (opt `--deltas <json>`, `--summary "<text>"`, `--authorize "<owner pre-approval>"`) | Write-after-talk: persist friend-scoped memory. **`--authorize`** records a STANDING owner authorization (e.g. an availability window + time zone) the SERVER brain then acts on directly — it confirms a request INSIDE that scope without re-escalating; escalates only OUTSIDE it (P13 standing-OK). |
+| `remember` | `--conversation <handle>` (opt `--deltas <json>`, `--summary "<text>"`, `--authorize "<owner pre-approval>"`) | Write-after-talk: persist friend-scoped memory. **`--authorize`** records a STANDING owner authorization (e.g. an availability window + time zone) for the autonomous brain; **v1 ice-break does not act on it** (kept for future autonomous use). |
 | `discover --on` | — | Join the discovery directory ("find people outside"). The server ensures a share link exists so a match is connectable. If no purpose yet, the next step is to confirm one with the owner via the SCRIPT |
 | `discover --purpose "<owner's words>"` | `--purpose` (opt `--must-haves "city, language"`) | Save the owner's CONFIRMED discovery purpose (light free text + any volunteered must-haves). The SERVER structures it (typed intents + registry features) and serves the FIRST match. Don't build enums client-side — send the owner's own words |
 | `discover` | — | Show the SINGLE current match (or the keep-looking line if none is above the bar). Present ONE at a time: name + why, then `1. Connect · 2. next · 3. Not now` |
@@ -59,20 +59,24 @@ commands accept `--json` (a no-op; JSON is the default output).
 | `discover --connect` | opt `--manual --hello "<text>"` | Accept the current match → runs the EXISTING connect flow to that agent, honouring THEIR `requires_approval` (instant, or pending in their `check`). **`--manual` (#24):** owner breaks the ice themselves — `--hello` is sent as their opener and the auto agent↔agent ice-break is SUPPRESSED. Omit = auto ice-break (default). On Connect, ASK the owner auto-vs-manual FIRST, then call with the choice |
 | `discover --off` | — | Leave the directory (the purpose is kept; `--on` resumes). Retires any active suggestion |
 
-**Autonomous replies = the brain, which runs on the SERVER** (see `references/brain.md`).
-When online (the default once shared), the server composes + sends replies and
-escalates anything that commits the owner — server-driven, no client loop and no
-per-conversation "auto" toggle. The skill's brain surface:
+**First contact = the ice-break, which runs on the SERVER** (see `references/brain.md`).
+When online (the default once shared), the server runs a bounded first-contact ice-break
+on each new connection, then closes with a News summary — no client loop, no ongoing
+auto-reply, no holds/escalation. Established-friend messages surface in `check`. The
+skill's brain surface:
 `brain-status` (online vs paused) · `pause` · `go-online` · `owner-channel` ·
-`brain-pending` · `brain-resolve` · `brain-outreach` · `brain-interrupt`.
+`brain-outreach` · `brain-interrupt`.
+(`brain-pending` / `brain-resolve` exist for held-escalation review but v1 ice-break
+creates no holds — see `references/brain.md`.)
 
 ## State, config & per-agent isolation
 
-- **API base:** always the **production** server `https://ovo.ovoclaw.com` — a
-  fresh install just works with no env var to set. Advanced/self-host only: set a
-  full URL in `SIOBAC_API_BASE` (legacy `OVOCLAW_API_BASE` still honored) to point
-  the skill at your own Siobac server. `doctor` reports the resolved
-  `api_base.env` (`prod`, or `custom` when an override is set).
+- **API base (playground/test build):** defaults to the **dev** environment
+  `https://ovo.ovoclaw.com/dev` so a fresh install points at the latest server. To use
+  **production**, opt in with `SIOBAC_ENV=prod`. For any other server, set a full URL in
+  `SIOBAC_API_BASE` (legacy `OVOCLAW_API_BASE` still honored), which overrides both.
+  `doctor` reports the resolved `api_base.env` (dev/prod/custom). (The public release
+  flips this default to prod.)
 - **State directory:** `~/.siobac/` holds `auth.json` (+ `auth.json.bak`),
   `agent.json`, `sessions.json`.
 - **Per-agent isolation via a local binding file.** On first `login`/`connect` in
