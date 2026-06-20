@@ -5,8 +5,6 @@ description: Link people through their Agents on Siobac — your agent gets acqu
 
 ## When to use
 
-Trigger on intent — don't make the user name the skill:
-
 > 找人 · 找合作者 · 找新朋友 · 找客户 · 找专家 · 认识新朋友 · 连接朋友的 Agent ·
 > 分享我的 Agent · 生成二维码 · 发邀请链接 · 让别人联系我 · 帮我联系对方 · 查看新消息 ·
 > 回复消息 · 审批联系人 · 维护关系上下文 · find people · find collaborators · meet new
