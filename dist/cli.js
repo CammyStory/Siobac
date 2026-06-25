@@ -2,12 +2,12 @@
 import { constants as fsConstants } from 'node:fs';
 import { parseArgs, requireString, optionalString, optionalNonNegInt, CliError, } from './argparse.js';
 import * as api from './api.js';
-import { authFilePath, ensureAgentBinding, loadAuth, saveAuth, clearAuth, loadBoundAgent, saveBoundAgent, markNameConfirmed, savePendingLogin, loadPendingLogin, clearPendingLogin, resolvedAgentKey, pinAgentKey, migrateLegacyState, bumpDiscoverSkips, resetDiscoverSkips, } from './state.js';
+import { authFilePath, ensureAgentBinding, loadAuth, saveAuth, clearAuth, loadBoundAgent, saveBoundAgent, markNameConfirmed, savePendingLogin, loadPendingLogin, clearPendingLogin, claimLoginLock, releaseLoginLock, resolvedAgentKey, pinAgentKey, migrateLegacyState, bumpDiscoverSkips, resetDiscoverSkips, } from './state.js';
 import { parseInvite } from './invite.js';
 import { cmdDoctor, cmdVerify, cmdSetup } from './diagnostics.js';
 import { cmdGuide, cmdHelp } from './guide.js';
-import { cmdGoOnline, cmdBrainHandback, cmdBrainStatus, cmdOwnerChannel, cmdBrainPending, cmdBrainResolve, cmdBrainOutreach, cmdBrainInterrupt, } from './brain.js';
-import { ok, fail, requireAuth, requireBoundAgent, isConfirmed, needsConfirmation, shareUrlFor, qrUrlFor, qrMarkdownFor, verifyShareResolves, } from './runtime.js';
+import { cmdGoOnline, cmdBrainHandback, cmdBrainStatus, cmdOwnerChannel, cmdBrainPending, cmdBrainResolve, cmdBrainOutreach, cmdBrainInterrupt, cmdDismiss, } from './brain.js';
+import { ok, fail, requireAuth, requireBoundAgent, isConfirmed, needsConfirmation, shareUrlFor, qrUrlFor, qrMarkdownFor, connectCodeFor, verifyShareResolves, } from './runtime.js';
 // ── Real commands ────────────────────────────────────────────────────
 // Two-step login. `login` (initiate) requests a device code, stashes it, and
 // returns the approval URL immediately — it does NOT poll. `login --finish`,
@@ -84,32 +84,65 @@ async function cmdLogin(flags) {
     const explicitAgent = optionalString(flags, 'agent');
     const bound = await loadBoundAgent();
     const agentHint = explicitAgent ?? bound?.agentId;
+    // Atomically claim the mint slot BEFORE the network call. This closes the
+    // TOCTOU window in the guard above (load → mint → save): if a second `login`
+    // raced in there, both minted a device code and the second's save clobbered
+    // the first's record, orphaning a code and handing the user two rival links
+    // (the prod "fail to login"). If the claim fails, a login is already in flight
+    // — re-show its link rather than minting a competitor.
+    const claimed = await claimLoginLock();
+    if (!claimed) {
+        const inflight = await loadPendingLogin();
+        if (inflight && inflight.verificationUriComplete && Date.now() < new Date(inflight.expiresAt).getTime()) {
+            return ok({
+                status: 'awaiting_user_approval',
+                reused: true,
+                verification_uri_complete: inflight.verificationUriComplete,
+                verification_uri: inflight.verificationUri,
+                user_code: inflight.userCode,
+                message: 'A login is ALREADY being set up — do not start another. Show the user THIS link and have them approve it.',
+                next_step: 'After the user confirms they approved, run `login --finish` once. Do NOT re-run `login`.',
+            });
+        }
+        return ok({
+            status: 'login_in_progress',
+            message: 'A login was JUST started in another run and is still being set up. Do NOT mint another.',
+            next_step: 'Wait a moment, then run `login` once more to get the link (or `login --finish` if the user already approved).',
+        });
+    }
     let codeResp;
     try {
-        codeResp = await api.requestDeviceCode(undefined, agentHint);
-    }
-    catch (e) {
-        const apiErr = e;
-        if (apiErr.code === 'server_not_ready') {
-            throw api.makeApiError('server_not_ready', 'login: OAuth device flow endpoints not deployed on the server yet (phase 2 work). The skill is ready; the server side ships next.');
+        try {
+            codeResp = await api.requestDeviceCode(undefined, agentHint);
         }
-        throw e;
+        catch (e) {
+            const apiErr = e;
+            if (apiErr.code === 'server_not_ready') {
+                throw api.makeApiError('server_not_ready', 'login: OAuth device flow endpoints not deployed on the server yet (phase 2 work). The skill is ready; the server side ships next.');
+            }
+            throw e;
+        }
+        // Persist the device code in this agent's state dir so `login --finish` can
+        // poll it from a separate process.
+        await savePendingLogin({
+            deviceCode: codeResp.device_code,
+            interval: codeResp.interval,
+            expiresAt: new Date(Date.now() + codeResp.expires_in * 1000).toISOString(),
+            agentHint,
+            startedAt: new Date().toISOString(),
+            // Record the resolved state key so `login --finish` saves the token to the
+            // SAME per-agent folder even if it runs from a different working directory.
+            agentKey: resolvedAgentKey(),
+            verificationUriComplete: codeResp.verification_uri_complete,
+            verificationUri: codeResp.verification_uri,
+            userCode: codeResp.user_code,
+        });
     }
-    // Persist the device code in this agent's state dir so `login --finish` can
-    // poll it from a separate process.
-    await savePendingLogin({
-        deviceCode: codeResp.device_code,
-        interval: codeResp.interval,
-        expiresAt: new Date(Date.now() + codeResp.expires_in * 1000).toISOString(),
-        agentHint,
-        startedAt: new Date().toISOString(),
-        // Record the resolved state key so `login --finish` saves the token to the
-        // SAME per-agent folder even if it runs from a different working directory.
-        agentKey: resolvedAgentKey(),
-        verificationUriComplete: codeResp.verification_uri_complete,
-        verificationUri: codeResp.verification_uri,
-        userCode: codeResp.user_code,
-    });
+    finally {
+        // Release once the pending record is written (or the mint failed); the
+        // pending file itself is the idempotency record for the rest of the window.
+        await releaseLoginLock();
+    }
     // The qclaw/workbuddy model suggestion already happened as its OWN first step
     // (Step 0 above) — so it is NOT repeated here; the login link stands alone.
     // Show the user the verification link. Prefer verification_uri_complete —
@@ -306,48 +339,55 @@ async function cmdShareSelf(flags) {
     optionalString(flags, 'description'); // accepted for forward-compat; not used by the invite endpoint
     // Approval policy. `explicit` is the owner's EXPLICIT choice (undefined if no
     // flag passed). NEW shares default to AUTO-ACCEPT (no approval) so the first
-    // connection just works; the owner can require approval anytime with
-    // `set-approval --on`. An existing invite's setting is never changed here
-    // unless the owner explicitly chose one.
+    // connection just works; the owner can require approval anytime with `set-approval --on`.
     const explicit = parseRequiresApproval(flags);
     const createApproval = explicit ?? false; // default: auto-accept
     const { auth, agentId } = await requireBoundAgent();
-    // ONBOARDING GATE (design-before-share): don't let an agent with NO public profile
-    // go live silently — a friend would reach an agent that doesn't know who it is. The
-    // DIRECTIVE (ground rules) is OPTIONAL — the server applies a unified default — so a
-    // missing directive no longer counts as "undesigned" or blocks sharing.
+    // ONE STEP. The owner has already said yes in conversation — the share flow in
+    // scripts-en/cn.md has the agent ASK first and OFFER a custom connect code in the
+    // SAME breath — so publishing happens directly: no `--confirmed` round-trip and no
+    // separate post-share "customize your code" step. If the owner chose a custom handle
+    // it arrives as `--code` and is applied as part of this single publish.
+    const rawCode = optionalString(flags, 'code');
+    const desiredCode = rawCode ? rawCode.replace(/@siobac(\.com)?$/i, '').trim() : undefined;
+    // Design awareness (NON-blocking): surface — don't gate — a missing public profile.
+    // The scripts run profile setup just-in-time before share; this is only a backstop
+    // note so a bare agent going live is at least flagged in the result.
     const design = await api.getAgentProfile(auth.accessToken, agentId).catch(() => null);
-    const needsProfile = design ? !design.profile_complete : false;
-    const undesigned = needsProfile;
-    const missing = needsProfile ? 'a profile' : '';
-    // CONSENT GATE — publishing the agent is outward-facing; confirm before it fires.
-    if (!isConfirmed(flags)) {
-        const policy = createApproval === false
-            ? 'AUTO-ACCEPT — anyone with the link connects without your review (default; turn on with `set-approval --on`)'
-            : 'approval required — you approve each new connection';
-        needsConfirmation('share-self', { will: 'Publish this agent and produce a shareable QR/link anyone you give it to can use to reach you.', approval_policy: policy,
-            design_warning: undesigned ? `Not designed yet — missing ${missing}. Friends would reach an agent that doesn't know who it is. Recommend setting a profile first (set-profile).` : undefined }, undesigned
-            ? `Before I share you — you haven't set ${missing} yet, so friends would reach an agent that doesn't know who you are. Set that up first, or share anyway?`
-            : `I'll publish you on Siobac and make a QR/link people can use to reach you (${createApproval === false ? 'auto-accepting new connections — you can switch to approval-required anytime with set-approval --on' : 'with your approval for each new connection'}). Want me to go ahead?`, undesigned
-            ? 'Design first: help the owner set the profile (set-profile --description "…"). Only share anyway on a clear owner yes: share-self --confirmed'
-            : 'share-self --confirmed (add --requires-approval if you want to approve each connection instead)');
-    }
+    const undesigned = design ? !design.profile_complete : false;
     let invite = await api.createShare(auth.accessToken, agentId, { requires_approval: createApproval });
     // createShare is idempotent and IGNORES requires_approval on an EXISTING invite.
-    // Only change an existing invite's setting when the owner EXPLICITLY chose one
-    // (PATCH in place — keeps the SAME slug/QR; changing approval never rotates the link).
+    // Only change an existing invite's setting when the owner EXPLICITLY chose one.
     if (explicit !== undefined && invite.requires_approval !== explicit) {
         invite = await api.updateShareApproval(auth.accessToken, agentId, explicit);
     }
-    // VERIFY before claiming success: round-trip the new slug through the public
-    // manifest so we KNOW the QR/link actually resolves to this agent before
-    // handing it to the owner. A created-but-unresolvable share is exactly the
-    // "looks done but isn't" failure to catch here, not after the owner shares it.
+    // Apply the owner's chosen connect code in the SAME step. A taken/invalid code does
+    // NOT block the share — the agent is already live on the auto code and can pick
+    // another later with `set-code`; we just report it so the agent can re-ask.
+    let codeRejected;
+    if (desiredCode) {
+        try {
+            invite = await api.setConnectCode(auth.accessToken, agentId, desiredCode);
+        }
+        catch (e) {
+            const err = e;
+            if (err.status === 409 || err.status === 400) {
+                codeRejected = { attempted: connectCodeFor(desiredCode.toLowerCase()), reason: err.status === 409 ? 'code_taken' : 'invalid' };
+            }
+            else
+                throw e;
+        }
+    }
+    // VERIFY before claiming success: round-trip the slug through the public manifest so
+    // we KNOW the QR/link resolves to this agent before handing it to the owner.
     const verified = await verifyShareResolves(invite.slug);
     const linkWorks = verified.resolves && verified.points_back;
     ok({
         status: linkWorks ? 'shared' : 'shared_unverified',
         agent_id: agentId,
+        // The human-facing handle: `<code>@siobac`, like an email. People can type this
+        // OR scan the QR to reach the agent. It is case-insensitive.
+        connect_code: connectCodeFor(invite.slug),
         invite: {
             id: invite.id,
             slug: invite.slug,
@@ -359,11 +399,22 @@ async function cmdShareSelf(flags) {
         qr_markdown: qrMarkdownFor(invite.slug),
         // Programmatic proof the link resolves (not just that create returned 200).
         verified: { share_resolves: verified.resolves, points_back: verified.points_back, reason: verified.reason },
+        design_warning: undesigned
+            ? "No public profile yet — friends would reach an agent that doesn't know who it is. Tell the owner and offer to set one now (set-profile)."
+            : undefined,
+        code_rejected: codeRejected
+            ? `The custom code ${codeRejected.attempted} was ${codeRejected.reason === 'code_taken' ? 'already taken' : 'not valid (use 3–15 letters/numbers)'} — you're LIVE on ${connectCodeFor(invite.slug)} for now. Tell the owner; if they want, ask for another and run \`set-code --code "<choice>"\`.`
+            : undefined,
         note: linkWorks
-            ? 'DISPLAY THE QR INLINE: render it as an image so the user sees a scannable QR, not a link — drop the ready-made `qr_markdown` straight into your reply (it is `![](qr_url)`). Also give `share_url` as a copyable link. Only if your platform cannot render images, fall back to showing `qr_url` as a plain link. (createInvite is idempotent — an already-shared agent returns its existing invite.) The link was VERIFIED to resolve to this agent.'
+            ? `DISPLAY THE QR INLINE: render it as an image so the user sees a scannable QR, not a link — drop the ready-made \`qr_markdown\` straight into your reply (it is \`![](qr_url)\`). Also give \`share_url\` as a copyable link, AND show the \`connect_code\` (${connectCodeFor(invite.slug)}) — a short email-like handle people can type to reach this agent. Only if your platform cannot render images, fall back to showing \`qr_url\` as a plain link. The link was VERIFIED to resolve to this agent.`
             : `CAUTION: the share was created but did NOT verify — the link did not resolve back to this agent (${verified.reason ?? 'unknown'}). Do NOT tell the owner it is ready. Re-run \`share-self\`, check connectivity with \`doctor\`, or run \`verify\` for detail before handing out the QR.`,
+        // Only when the owner did NOT already pick a code in this step — the customization
+        // is normally folded into the single share step (the agent offers it up front).
+        customize_code: (!desiredCode && linkWorks)
+            ? `The connect code is auto-generated (${connectCodeFor(invite.slug)}). If the owner would prefer a memorable one, run \`set-code --code "<their choice>"\` (3–15 letters/numbers) — otherwise leave it.`
+            : undefined,
         next_step: linkWorks
-            ? 'If you have not already, help the owner set up their agent so others understand who they are: (1) confirm the NAME (`set-profile --name "…"`); (2) PUBLIC profile (`set-profile --description "…"`). That is all that is needed — the agent already replies in character with sensible default ground rules. OPTIONAL: if the owner wants to fine-tune how it acts on their behalf, they can set private ground rules with `set-directive --content "…"` (skippable). Then, when a friend connects, use `recall` before replying and `remember` after (see Step 6 in references/guide.md, or run `guide --step serve_incoming`).'
+            ? 'If you have not already, help the owner set up their agent so others understand who they are: (1) confirm the NAME (`set-profile --name "…"`); (2) PUBLIC profile (`set-profile --description "…"`). That is all that is needed — the agent already replies in character with sensible default ground rules. OPTIONAL: private ground rules with `set-directive --content "…"` (skippable). Then, when a friend connects, use `recall` before replying and `remember` after (see Step 6 in references/guide.md, or run `guide --step serve_incoming`).'
             : 'Share verification FAILED — resolve that first. Run `verify` for the full check, or `doctor` for connectivity, then `share-self` again. Do not surface the QR as working until `verified.share_resolves` and `verified.points_back` are both true.',
     });
 }
@@ -447,6 +498,65 @@ async function cmdRegenerateShare(flags) {
         qr_markdown: qrMarkdownFor(invite.slug),
         note: 'DISPLAY THE QR INLINE: render `qr_markdown` as an image (it is `![](qr_url)`) so the user sees a scannable QR, with `share_url` as the copyable link — do not just paste the URL. Fall back to the plain `qr_url` link only if your platform cannot render images. The previous slug is now revoked; existing connections are unaffected, but old share links / QR codes stop working.',
     });
+}
+// Set or change the agent's custom connect code (the `<code>@siobac` handle).
+// Used both when the owner customises on first share AND to change it later.
+// Updated IN PLACE: people already connected keep working; the OLD `<code>@siobac`
+// stops resolving for new connects. There is only ever ONE active code.
+async function cmdSetConnectCode(flags) {
+    const raw = optionalString(flags, 'code');
+    if (!raw) {
+        throw new CliError('set-code needs --code "<your choice>" — 3–15 letters or numbers (case-insensitive), e.g. --code "alex". People reach the agent by typing `<code>@siobac` or scanning the QR.');
+    }
+    // Strip a typed `@siobac` suffix so `--code "alex@siobac"` works too.
+    const desired = raw.replace(/@siobac(\.com)?$/i, '').trim();
+    const { auth, agentId } = await requireBoundAgent();
+    // CONSENT/EXPECTATION GATE — changing an EXISTING code breaks the old handle for
+    // anyone who saved it. Confirm before changing (first-time set needs no gate
+    // since nothing was handed out yet, but the agent drives that via the offer).
+    let current = null;
+    try {
+        const active = await api.getActiveInvite(auth.accessToken, agentId);
+        current = active?.invite?.slug ?? null;
+    }
+    catch { /* no active invite yet — first-time set */ }
+    const isChange = !!current && current.toLowerCase() !== desired.toLowerCase();
+    if (isChange && !isConfirmed(flags)) {
+        needsConfirmation('set-code', { will: `Change the connect code from ${connectCodeFor(current)} to ${connectCodeFor(desired.toLowerCase())}. People already connected are UNAFFECTED, but anyone who saved the OLD code can no longer reach the agent with it. There is only one active code.` }, `Change your connect code to ${connectCodeFor(desired.toLowerCase())}? Your old ${connectCodeFor(current)} will stop working for new connections (people already connected stay connected).`, `set-code --code "${desired}" --confirmed`);
+    }
+    try {
+        const invite = await api.setConnectCode(auth.accessToken, agentId, desired);
+        ok({
+            status: 'code_set',
+            agent_id: agentId,
+            connect_code: connectCodeFor(invite.slug),
+            previous_code: current && current.toLowerCase() !== invite.slug.toLowerCase() ? connectCodeFor(current) : undefined,
+            invite: { id: invite.id, slug: invite.slug, requires_approval: invite.requires_approval },
+            share_url: shareUrlFor(invite.slug),
+            qr_url: qrUrlFor(invite.slug),
+            qr_markdown: qrMarkdownFor(invite.slug),
+            next_step: `Tell the owner (in their language) their connect code is now ${connectCodeFor(invite.slug)} — people can type that (case doesn't matter) or scan the QR to reach them.${current && current.toLowerCase() !== invite.slug.toLowerCase() ? ` The old ${connectCodeFor(current)} no longer works for NEW connections; anyone already connected is unaffected.` : ''}`,
+        });
+    }
+    catch (e) {
+        const err = e;
+        // 409 = taken, 400 = invalid format / reserved. Return a clean, re-promptable
+        // result (not a hard failure) so the agent simply asks the owner for another.
+        if (err.status === 409 || err.status === 400) {
+            const taken = err.status === 409;
+            ok({
+                status: 'code_rejected',
+                agent_id: agentId,
+                attempted: connectCodeFor(desired.toLowerCase()),
+                reason: taken ? 'code_taken' : 'invalid',
+                message: taken
+                    ? `${connectCodeFor(desired.toLowerCase())} is already taken — ask the owner for a different code.`
+                    : `"${desired}" isn't a valid code. It must be 3–15 letters or numbers (no spaces/symbols), and can't be a reserved word. Ask the owner for another.`,
+                next_step: 'Ask the owner for a different connect code, then run `set-code --code "<new choice>"` again.',
+            });
+        }
+        throw e;
+    }
 }
 async function cmdListConnections(flags) {
     const statusFilter = optionalString(flags, 'status');
@@ -989,7 +1099,10 @@ async function cmdCheck(_flags) {
         try {
             const oc = await api.brainOwnerChannelRead(auth.accessToken, auth.agentId);
             result.notices = (oc.messages || [])
-                .filter((m) => m.from === 'agent' && !m.text.startsWith('🔔'))
+                // Owner-relevant notices only: agent-posted, NOT a 🔔 escalation (those go via
+                // needs_you), and NOT 'operational' — transient/internal brain chatter (e.g. a
+                // retryable auto-reply error) is plumbing noise, never shown in the overview.
+                .filter((m) => m.from === 'agent' && m.kind !== 'operational' && !m.text.startsWith('🔔'))
                 .slice(-8);
         }
         catch {
@@ -1018,15 +1131,20 @@ async function cmdCheck(_flags) {
         try {
             const ob = await api.listOutbound(auth.accessToken);
             for (const o of ob.connections) {
+                // `in_icebreak` = the bounded auto agent↔agent first-contact is STILL running
+                // (ice_break_closed=false). The owner can VIEW it but cannot address/reply to it
+                // mid-ice-break (no designed steer flow), so the presentation must separate these
+                // from wrapped conversations rather than surfacing the latest line as a "reply to me"
+                // message. Wrapped (ice_break_closed=true) = actionable: the owner can read + reply.
                 if (o.new_count > 0)
-                    outbound.push({ conversation: o.connection_id, peer: o.peer_name ?? null, new_count: o.new_count });
+                    outbound.push({ conversation: o.connection_id, peer: o.peer_name ?? null, new_count: o.new_count, in_icebreak: !o.ice_break_closed });
             }
         }
         catch { /* outbound is optional in the scan */ }
     }
     result.outbound = outbound;
     result.next_step = loggedIn
-        ? "`check` is the SINGLE complete scan — new messages + escalations + the brain's notices, all folded in (no separate `brain-pending` or `owner-channel` read needed). PRESENT IN TWO TIERS — never expand the whole pile at once.\n\nTIER 1 (THIS turn) — SUMMARY ONLY. Count the distinct items and give ONE numbered line each, BY FRIEND NAME, in the owner's language. NO raw message text, NO drafted replies, NO expanded content yet — just what each item is, in a few words. e.g. \"2 things need you — 1. 🔔 Robin: wants to book a call · 2. 💬 Alex: 3 new messages\". Then ask the owner to pick a number. If it's all quiet, say so in one line (you may still mention notices like \"✅ wrapped up with Sam\").\n\nTIER 2 (NEXT turn, after they pick a number) — open ONLY that one item: a SHORT summary of what it's about + its numbered actions. Show the actual exchange only if the owner then asks — and when you do, show BOTH sides (the friend's messages AND your agent's replies), readably, so it makes sense (summarize first, full back-and-forth later — never just the friend's half).\n\nBUILD the Tier-1 list in this ORDER, ONE line per DISTINCT item, DEDUPED by `connId` (an item in `needs_you` AND `inbound` is ONE line — surface as \"needs your OK\", never also as a new message): (1) `needs_you` = escalations the server HELD — resolve via `brain-resolve --request-id <id>` (sent/handed_off/declined); (2) `inbound.pending_requests` = people asking to connect (approve/reject); (3) `inbound.threads` held:false + unread_count>0 = new messages (`read --conversation <connection_id>`); (4) `notices` = the brain's narrative (🤝 new friend, ✅ wrapped up) — fold in as one-liners, don't expand; (5) `outbound[]` = new replies on conversations the owner STARTED (`new_count` per item; open with `read --conversation <its conversation value>`); (6) `discovery.suggestion` = a NEW person the platform FOUND for the owner (discovery) — surface as ONE upbeat line by NAME, e.g. \"🎯 I found someone you might click with — <candidate_name>. Want to see?\"; on the owner's yes, run `discover` to present them (then Connect · next · Not now). Never show the score or ids. Never show raw ids/handles. Only if `needs_you` AND unread AND pending_requests are ALL empty is the queue clear (a `discovery` match or notices may still be worth a mention)."
+        ? "`check` is the SINGLE complete scan — new messages + escalations + the brain's notices, all folded in (no separate `brain-pending` or `owner-channel` read needed). PRESENT IN TWO TIERS — never expand the whole pile at once.\n\nTIER 1 (THIS turn) — SUMMARY ONLY. Count the distinct items and give ONE numbered line each, BY FRIEND NAME, in the owner's language. NO raw message text, NO drafted replies, NO expanded content yet — just what each item is, in a few words. e.g. \"2 things need you — 1. 🔔 Robin: wants to book a call · 2. 💬 Alex: 3 new messages\". Then ask the owner to pick a number. If it's all quiet, say so in one line (you may still mention notices like \"✅ wrapped up with Sam\").\n\nTIER 2 (NEXT turn, after they pick a number) — open ONLY that one item: a SHORT summary of what it's about + its numbered actions. Show the actual exchange only if the owner then asks — and when you do, show BOTH sides (the friend's messages AND your agent's replies), readably, so it makes sense (summarize first, full back-and-forth later — never just the friend's half).\n\nBUILD the Tier-1 list in this ORDER, ONE line per DISTINCT item, DEDUPED by `connId` (an item in `needs_you` AND `inbound` is ONE line — surface as \"needs your OK\", never also as a new message): (1) `needs_you` = escalations the server HELD — resolve via `brain-resolve --request-id <id>` (sent/handed_off/declined); (2) `inbound.pending_requests` = people asking to connect (approve/reject); (3) `inbound.threads` held:false + unread_count>0 = new messages (`read --conversation <connection_id>`); (4) `notices` = the brain's narrative (🤝 new friend, ✅ wrapped up) — fold in as one-liners, don't expand; (5) `outbound[]` = activity on conversations the owner STARTED — SEPARATE BY `in_icebreak`: items with `in_icebreak:true` are STILL in the auto agent↔agent ice-break (the owner can VIEW it but CANNOT reply/address it yet — do NOT list its latest line as a 'friend message to reply to'; surface it as 'still talking — I'll summarize when it wraps', view-only), while `in_icebreak:false` items are WRAPPED and ACTIONABLE (the owner can read + reply: `read`/`send --conversation <its conversation value>`). Group these two apart so the owner only sees a 'reply' affordance on conversations they can actually act on; (6) `discovery.suggestion` = a NEW person the platform FOUND for the owner (discovery) — surface as ONE upbeat line by NAME, e.g. \"🎯 I found someone you might click with — <candidate_name>. Want to see?\"; on the owner's yes, run `discover` to present them (then Connect · next · Not now). Never show the score or ids. Never show raw ids/handles. Only if `needs_you` AND unread AND pending_requests are ALL empty is the queue clear (a `discovery` match or notices may still be worth a mention)."
         // LOGGED OUT: do NOT say "queue is clear" — inbound is invisible. Lead with the
         // login gap so a less-capable platform surfaces it instead of a false all-clear.
         : "NOT LOGGED IN — you can only see the owner's OUTBOUND conversations here (in `outbound`); their INBOUND (people who connected to them, requests, escalations) is INVISIBLE until they log in. Do NOT tell the owner their queue is clear. Tell them (in their language) you need a quick login to see incoming, then run `login` → `login --finish`. Still summarize anything in `outbound` if present.";
@@ -1239,6 +1357,7 @@ async function main() {
         case 'list-shares': return cmdListShares();
         case 'revoke-share': return cmdRevokeShare(flags);
         case 'set-approval': return cmdSetApproval(flags);
+        case 'set-code': return cmdSetConnectCode(flags);
         case 'regenerate-share': return cmdRegenerateShare(flags);
         case 'list-connections': return cmdListConnections(flags);
         case 'pause-connection': return cmdPauseConnection(flags);
@@ -1276,6 +1395,7 @@ async function main() {
         case 'brain-handback': return cmdBrainHandback(flags); // alias of pause
         case 'brain-status': return cmdBrainStatus(flags); // online vs paused
         case 'owner-channel': return cmdOwnerChannel(flags);
+        case 'dismiss': return cmdDismiss(flags); // drop a notice / clear all from the overview
         case 'brain-pending': return cmdBrainPending(flags); // open escalations
         case 'brain-resolve': return cmdBrainResolve(flags); // approve/decline
         case 'brain-outreach': return cmdBrainOutreach(flags); // owner-initiated reach-out

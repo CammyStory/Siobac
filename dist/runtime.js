@@ -250,6 +250,11 @@ export async function requireBoundAgent() {
     }
     return { auth, agentId: auth.agentId };
 }
+// The human-facing connect code: `<slug>@siobac`, like an email address. People
+// type this (or scan the QR) to reach the agent. Codes are case-insensitive.
+export function connectCodeFor(slug) {
+    return `${slug}@siobac`;
+}
 export function shareUrlFor(slug) {
     // The legacy /external/share/:slug landing page is served on the same host
     // the owner API lives on, so this resolves without needing the protocol

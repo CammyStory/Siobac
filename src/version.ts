@@ -3,4 +3,4 @@
 // the skill surfaces an update notice when this is behind. Keep in sync with
 // package.json's "version".
 export const SKILL_NAME = 'siobac'
-export const SKILL_VERSION = '1.0.0'
+export const SKILL_VERSION = '1.0.2'

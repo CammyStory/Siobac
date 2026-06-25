@@ -56,6 +56,34 @@ export async function cmdOwnerChannel(flags: Record<string, string | true>) {
   })
 }
 
+// dismiss: drop a notice from the overview (email-style inbox) — DURABLY (server
+// side, so it stays gone across logins). `--seq <n>` drops ONE notice ("leave it");
+// `--all` (with `--up-to <n>` = the latest notice seq) clears the whole FYI batch.
+// Nothing is deleted from history — the friend/conversation is still in `conversations`.
+export async function cmdDismiss(flags: Record<string, string | true>) {
+  const { auth, agentId } = await requireBoundAgent()
+  const all = flags['all'] === true || flags['all'] === 'true'
+  const upTo = optionalNonNegInt(flags, 'up-to')
+  const seq = optionalNonNegInt(flags, 'seq')
+  if (all || upTo !== undefined) {
+    // Bulk clear: advance the read-cursor to the latest seen notice seq.
+    const target = upTo ?? seq
+    if (target === undefined) {
+      ok({ status: 'error', error: 'dismiss --all needs --up-to <latest notice seq from check>', next_step: 'Re-run `check`, take the highest notice `seq`, then `dismiss --all --up-to <that seq>`.' })
+      return
+    }
+    const res = await api.dismissNotice(auth.accessToken, agentId, { up_to_seq: target })
+    ok({ status: 'cleared', ...res, next_step: "Overview FYI cleared — those recaps won't re-surface, even on a fresh login. Tell the owner (in their language) it's done; the conversations themselves are still under `conversations` if they want them. Then RE-RUN `check` and re-show the overview list." })
+    return
+  }
+  if (seq === undefined) {
+    ok({ status: 'error', error: 'dismiss needs --seq <notice seq> (one) or --all --up-to <seq> (clear all)', next_step: 'Use the notice `seq` from `check`: `dismiss --seq <n>` for one, or `dismiss --all --up-to <latest seq>` for all.' })
+    return
+  }
+  const res = await api.dismissNotice(auth.accessToken, agentId, { seq })
+  ok({ status: 'dismissed', ...res, next_step: "That notice is dismissed — it won't show in the overview again (durable across logins). Tell the owner (in their language) you've left it; then RE-RUN `check` and re-show the remaining overview list." })
+}
+
 export async function cmdBrainPending(_flags: Record<string, string | true>) {
   const { auth, agentId } = await requireBoundAgent()
   const res = await api.brainPending(auth.accessToken, agentId)

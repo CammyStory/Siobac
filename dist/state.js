@@ -367,6 +367,59 @@ export async function clearPendingLogin() {
             throw e;
     }
 }
+// ── Login-mint lock ──────────────────────────────────────────────────────────
+// The pending-login guard (load → mint → save) has a TOCTOU window: if a second
+// `login` runs after the first's load but before its save, BOTH mint a device
+// code, and the second's save OVERWRITES the first's record — orphaning one code
+// and leaving the user with two links (the "fail to login" we saw in prod). This
+// lock makes the claim atomic: it's acquired with O_EXCL BEFORE the network mint
+// and released after the pending record is written, so a concurrent `login` sees
+// the claim and reuses the in-flight link instead of minting a rival code. It
+// lives next to the pending file so its scope matches (shared base when unbound,
+// per-agent folder under a stable env key).
+function loginLockFile() {
+    return pendingLoginFile() + '.lock';
+}
+// Returns true if WE claimed the lock; false if a FRESH claim is already held by
+// a concurrent login. A stale claim (older than ttlMs — a mint that never
+// finished) is taken over so a crashed login can't wedge the flow forever.
+export async function claimLoginLock(ttlMs = 60_000) {
+    const f = loginLockFile();
+    await fs.mkdir(dirname(f), { recursive: true, mode: 0o700 });
+    try {
+        const fh = await fs.open(f, 'wx', 0o600); // O_EXCL — fails if it already exists
+        try {
+            await fh.writeFile(String(Date.now()));
+        }
+        finally {
+            await fh.close();
+        }
+        return true;
+    }
+    catch (e) {
+        if (e.code !== 'EEXIST')
+            throw e;
+        let fresh = false;
+        try {
+            const ts = parseInt(await fs.readFile(f, 'utf8'), 10);
+            fresh = Number.isFinite(ts) && Date.now() - ts < ttlMs;
+        }
+        catch { /* unreadable → treat as stale and take over */ }
+        if (fresh)
+            return false;
+        await fs.writeFile(f, String(Date.now()), { mode: 0o600 }); // take over the stale lock
+        return true;
+    }
+}
+export async function releaseLoginLock() {
+    try {
+        await fs.unlink(loginLockFile());
+    }
+    catch (e) {
+        if (e.code !== 'ENOENT')
+            throw e;
+    }
+}
 // ── Discovery: consecutive-skip counter ─────────────────────────────────
 // Counts how many times in a row the owner hit `discover --next` (skip). When the
 // owner skips repeatedly it usually means the recommendations aren't landing — NOT

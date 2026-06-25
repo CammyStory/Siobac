@@ -13,13 +13,24 @@ function inviteError(message: string): Error & { code: string } {
   return err
 }
 
+// A connect code is shown to humans as `<code>@siobac` (email-like). Strip that
+// suffix and lowercase, since codes are case-insensitive. Leaves real URLs and
+// bare slugs untouched aside from the suffix.
+function stripSiobacSuffix(s: string): string {
+  return s.replace(/@siobac(\.com)?$/i, '')
+}
+
 export function parseInvite(input: string): { slug: string; host: string } {
   const trimmed = input.trim()
   if (!trimmed) throw inviteError('invite is empty')
 
-  // No "/" and no ":" → a bare slug. Use our configured base.
+  // No "/" → a bare connect code (possibly `alex@siobac`). Use our configured
+  // base. (Checked before URL parsing so the `@` in a code isn't mistaken for a
+  // userinfo URL.)
   if (!trimmed.includes('/') && !trimmed.includes(':')) {
-    return { slug: trimmed, host: getApiBase() }
+    const code = stripSiobacSuffix(trimmed).toLowerCase()
+    if (!code) throw inviteError(`No connect code found in: ${input}`)
+    return { slug: code, host: getApiBase() }
   }
 
   let url: URL

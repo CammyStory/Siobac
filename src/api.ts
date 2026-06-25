@@ -466,6 +466,56 @@ export async function updateShareApproval(
   })
 }
 
+// The agent's current active share invite (or null). Used to know the existing
+// connect code before changing it.
+export async function getActiveInvite(
+  bearer: string,
+  agentId: string,
+): Promise<{ invite: { id: string; slug: string; requires_approval: boolean; created_at: string } | null }> {
+  return jsonFetch<{ invite: ShareInvite | null }>({
+    method: 'GET',
+    path: `/agents/${encodeURIComponent(agentId)}/external-invite`,
+    bearer,
+  })
+}
+
+// Set or change the agent's custom connect code (the `<code>@siobac` handle).
+// Updated in place — existing connections survive, the old code stops resolving.
+// Throws an ApiError; the caller should special-case .status===409 (code_taken)
+// and .status===400 (invalid format / reserved) to re-prompt.
+export async function setConnectCode(
+  bearer: string,
+  agentId: string,
+  code: string,
+): Promise<ShareInvite> {
+  return jsonFetch<ShareInvite>({
+    method: 'PATCH',
+    path: `/agents/${encodeURIComponent(agentId)}/external-invite/code`,
+    bearer,
+    body: { code },
+  })
+}
+
+export interface CodeCheckResult {
+  valid: boolean
+  available: boolean
+  code: string
+  error?: 'invalid_format' | 'reserved'
+}
+
+// Vet a custom connect code before committing to it (format + availability).
+export async function checkConnectCode(
+  bearer: string,
+  agentId: string,
+  code: string,
+): Promise<CodeCheckResult> {
+  return jsonFetch<CodeCheckResult>({
+    method: 'GET',
+    path: `/agents/${encodeURIComponent(agentId)}/external-invite/check-code?code=${encodeURIComponent(code)}`,
+    bearer,
+  })
+}
+
 export interface ShareListEntry {
   agent_id: string
   agent_name: string
@@ -914,12 +964,22 @@ export type { AuthState }
 // docs/agent-brain-api-contract.md. Owner-authed (acts as the agent's owner).
 // Owner-channel, presence (online/paused), and escalation handling
 // (pending/resolve) — no client tick/loop/slice; the server is the responder.
-export interface OwnerChannelMsg { seq: number; from: 'owner' | 'agent'; text: string; ts: string }
+export interface OwnerChannelMsg { seq: number; from: 'owner' | 'agent'; text: string; ts: string; kind?: 'note' | 'operational' }
 export async function brainOwnerChannelRead(bearer: string, agentId: string, since = 0): Promise<{ messages: OwnerChannelMsg[]; cursor: number | null }> {
   return jsonFetch({ method: 'GET', path: `/agents/${encodeURIComponent(agentId)}/owner-channel?since=${since}`, bearer })
 }
 export async function brainOwnerChannelPost(bearer: string, agentId: string, from: 'owner' | 'agent', text: string): Promise<{ seq: number }> {
   return jsonFetch({ method: 'POST', path: `/agents/${encodeURIComponent(agentId)}/owner-channel`, bearer, body: { from, text } })
+}
+// Durable overview dismissal (email-style inbox). Pass `seq` to drop ONE notice,
+// or `up_to_seq` to bulk "clear all" (advance the read-cursor). Server-side, so a
+// dismissed recap never re-surfaces in `check` — even after a fresh login.
+export async function dismissNotice(
+  bearer: string,
+  agentId: string,
+  arg: { seq: number } | { up_to_seq: number },
+): Promise<{ dismissed: boolean } | { seen_seq: number }> {
+  return jsonFetch({ method: 'POST', path: `/agents/${encodeURIComponent(agentId)}/owner-channel/dismiss`, bearer, body: arg })
 }
 export async function brainHandback(bearer: string, agentId: string): Promise<{ mode: 'paused' }> {
   return jsonFetch({ method: 'POST', path: `/agents/${encodeURIComponent(agentId)}/handback`, bearer })

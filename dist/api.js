@@ -241,6 +241,35 @@ export async function updateShareApproval(bearer, agentId, requiresApproval) {
         body: { requires_approval: requiresApproval },
     });
 }
+// The agent's current active share invite (or null). Used to know the existing
+// connect code before changing it.
+export async function getActiveInvite(bearer, agentId) {
+    return jsonFetch({
+        method: 'GET',
+        path: `/agents/${encodeURIComponent(agentId)}/external-invite`,
+        bearer,
+    });
+}
+// Set or change the agent's custom connect code (the `<code>@siobac` handle).
+// Updated in place — existing connections survive, the old code stops resolving.
+// Throws an ApiError; the caller should special-case .status===409 (code_taken)
+// and .status===400 (invalid format / reserved) to re-prompt.
+export async function setConnectCode(bearer, agentId, code) {
+    return jsonFetch({
+        method: 'PATCH',
+        path: `/agents/${encodeURIComponent(agentId)}/external-invite/code`,
+        bearer,
+        body: { code },
+    });
+}
+// Vet a custom connect code before committing to it (format + availability).
+export async function checkConnectCode(bearer, agentId, code) {
+    return jsonFetch({
+        method: 'GET',
+        path: `/agents/${encodeURIComponent(agentId)}/external-invite/check-code?code=${encodeURIComponent(code)}`,
+        bearer,
+    });
+}
 export async function listShares(bearer) {
     // Phase 3: server-side aggregate over every agent the owner owns
     // (GET /agents/external-shares).
@@ -495,6 +524,12 @@ export async function brainOwnerChannelRead(bearer, agentId, since = 0) {
 }
 export async function brainOwnerChannelPost(bearer, agentId, from, text) {
     return jsonFetch({ method: 'POST', path: `/agents/${encodeURIComponent(agentId)}/owner-channel`, bearer, body: { from, text } });
+}
+// Durable overview dismissal (email-style inbox). Pass `seq` to drop ONE notice,
+// or `up_to_seq` to bulk "clear all" (advance the read-cursor). Server-side, so a
+// dismissed recap never re-surfaces in `check` — even after a fresh login.
+export async function dismissNotice(bearer, agentId, arg) {
+    return jsonFetch({ method: 'POST', path: `/agents/${encodeURIComponent(agentId)}/owner-channel/dismiss`, bearer, body: arg });
 }
 export async function brainHandback(bearer, agentId) {
     return jsonFetch({ method: 'POST', path: `/agents/${encodeURIComponent(agentId)}/handback`, bearer });
